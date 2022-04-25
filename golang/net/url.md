@@ -28,6 +28,35 @@ type URL struct {
 }
 ````
 
+主要函数
+
+函数 `url.Parse` 用于将原始 url 解析为 url 结构
+
+主要实现解析：
+
+1. `Parse` 会首先通过 url.split 分离出 url(不带fragment) 和 fragment
+2. 使用 `url.parse` 解析构造 URL struct
+   1. 这里 `viaRequest = false`，因此可以解析任意形式的 url
+
+
+
+函数 url.parse 将不带 fragment 的 url 解析为 url 结构
+
+主要实现解析：
+
+1. url.parse 第二个参数用于判断 url 的类型，为 false 支持所有类型，true 只支持 `hierarchical` 的类型
+2. 使用 stringContainsCTLByte 判断是否带有 `ASCII control character`
+   1. ASCII control character 是指 `第0～31号及第127号(共33个)`
+   2. 这里 使用的是 `b < ' ' || b == 0x7f`，' ' 即 32号，'0x7f' 即 127号
+3. 使用 url.getScheme 解析分离协议部分(通过:),转化为小写后赋值到 url.Scheme
+4. 解析 query 部分
+   1. 如果是以 `?` 结尾，并且只出现了一次，`url.ForceQuery = true`
+   2. 否则使用 url.split 分离 `?`
+5. 通过判断是否已`/`开头(注意这里已经分离了协议了)来确定是否为 Opaque
+6. 分离出 authority 信息，并且使用 url.authority 解析出 url.User 和 url.Host
+7. 使用 url.setPath 设置 url.Path 和 url.RawPath
+8. 返回 url 结构体
+
 
 
 
