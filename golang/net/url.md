@@ -33,26 +33,51 @@ type URL struct {
 ## 主要函数
 
 注意部分是未导出的函数，这里把导出函数排前面。
-url.func 的方式都是指 url包下面的func函数
-*URL.func 的方式都是指 URL结构体的引用
 
 ---
 
 函数 `url.Parse(rawurl string) (*URL, error)` 用于将原始 url 解析为 URL 结构
 
-1. `Parse` 会首先通过 `url.split()` 分离出 url(不带fragment) 和 fragment
-2. 使用 `url.parse()` 解析构造 URL struct
-   1. 这里 `viaRequest = false`，因此可以解析任意形式的 url
-3. 如果存在 fragment 设置 fragment 后返回
+````
+
+func Parse(rawURL string) (*URL, error) {
+   // 分离出 Fragment
+   u, frag := split(rawURL, '#', true)
+   // 解析构造 URL struct 
+   // 这里 `viaRequest = false`，因此可以解析任意形式的 url
+   url, err := parse(u, false)
+   if err != nil {
+      return nil, &Error{"parse", u, err}
+   }
+   if frag == "" {
+      return url, nil
+   }
+   // 设置 fragment
+   if err = url.setFragment(frag); err != nil {
+      return nil, &Error{"parse", rawURL, err}
+   }
+   return url, nil
+}
+
+````
 
 ---
 
 函数 `url.ParseRequestURI(rawurl string) (*URL, error)` 用于解析一个 http 请求的 url，且假设是不带 Fragment 的
 
-1. 使用 `url.parse()` 解析构造 URL struct
-   1. 这里 `viaRequest = true`，因此只能解析http形式的 url
-   
-和 `url.Parse(rawurl string) (*URL, error)` 的区别在于不会分离 fragment ，和在调用 `url.parse()` 的时候 viaRequest 设置的是 true
+````
+func ParseRequestURI(rawURL string) (*URL, error) {
+   // 这里 `viaRequest = true`，因此只能解析http形式的 url
+   // 和 `url.Parse(rawurl string) (*URL, error)` 的区别在于不会分离 fragment ，
+   // 和在调用 `url.parse()` 的时候 viaRequest 设置的是 true
+   url, err := parse(rawURL, true)
+   if err != nil {
+      return nil, &Error{"parse", rawURL, err}
+   }
+      return url, nil
+}
+
+````
 
 ---
 
@@ -60,40 +85,125 @@ url.func 的方式都是指 url包下面的func函数
 
 获取URL的 RawPath 应该使用此函数，而不是直接读 u.RawPath
 
-1. 使用 `validEncoded()` 判断 u.RawPath 是否规范
-2. 规范则使用 `unescape()` 解码，然后和 u.Path 比较，相同则返回
-3. u.RawPath 不规范或解码后和 u.Path 不同，直接使用 `escape` 编码 u.Path 后返回
-
+````
+func (u *URL) EscapedPath() string {
+   // 使用 `validEncoded()` 判断 u.RawPath 是否规范
+   if u.RawPath != "" && validEncoded(u.RawPath, encodePath) {
+      // 解码，和 u.path 比较, 相等返回
+      p, err := unescape(u.RawPath, encodePath)
+      if err == nil && p == u.Path {
+         return u.RawPath
+      }
+   }
+      if u.Path == "*" {
+         return "*" // don't escape (Issue 11202)
+      }
+   // 其他情况直接编码 u.path
+   return escape(u.Path, encodePath)
+}
+````
 
 ---
 
 函数 `url.parse()` 将不带 fragment 的 url 解析为 url 结构
 
-主要实现解析：
-
-1. url.parse 第二个参数用于判断 url 的类型，为 false 支持所有类型，true 只支持 `hierarchical` 的类型
-2. 使用 `url.stringContainsCTLByte()` 判断是否带有 `ASCII control character`
-   1. ASCII control character 是指 `第0～31号及第127号(共33个)`
-   2. 这里 使用的是 `b < ' ' || b == 0x7f`，' ' 即 32号，'0x7f' 即 127号
-3. 使用 `url.getScheme()` 解析分离协议部分(通过:),转化为小写后赋值到 url.Scheme
-4. 解析 query 部分
-   1. 如果是以 `?` 结尾，并且只出现了一次，`url.ForceQuery = true`
-   2. 否则使用 url.split 分离 `?`
-5. 通过判断是否已`/`开头(注意这里已经分离了协议了)来确定是否为 Opaque
-6. 分离出 authority 信息，并且使用 `url.authority()` 解析出 url.User 和 url.Host
-7. 使用 `url.setPath()` 设置 url.Path 和 url.RawPath
-8. 返回 url 结构体
+````
+func parse(rawURL string, viaRequest bool) (*URL, error) {
+   var rest string
+   var err error
+   // 判断是否带有 `ASCII control character`
+   // 1. ASCII control character 是指 `第0～31号及第127号(共33个)`
+   // 2. 这里 使用的是 `b < ' ' || b == 0x7f`，' ' 即 32号，'0x7f' 即 127号
+   if stringContainsCTLByte(rawURL) {
+      return nil, errors.New("net/url: invalid control character in URL")
+   }
+   
+   if rawURL == "" && viaRequest {
+      return nil, errors.New("empty url")
+   }
+   url := new(URL)
+   
+   if rawURL == "*" {
+      url.Path = "*"
+      return url, nil
+   }
+   
+   // 解析分离协议部分(通过:),转化为小写后赋值到 url.Scheme
+   if url.Scheme, rest, err = getScheme(rawURL); err != nil {
+      return nil, err
+   }
+   url.Scheme = strings.ToLower(url.Scheme)
+   // 是否已 ? 结尾，并且只出现一次
+   if strings.HasSuffix(rest, "?") && strings.Count(rest, "?") == 1 {
+      url.ForceQuery = true
+      rest = rest[:len(rest)-1]
+   } else {
+      //  去除 ? 后，赋值 RawQuery 返回
+   r  est, url.RawQuery = split(rest, '?', true)
+   }
+   // 是否以 / 开头，注意这里已经分离了协议
+   // 不是 / 开头就代表为 opaque 的形式
+   if !strings.HasPrefix(rest, "/") {
+      // 协议不为空赋值 Opaque 返回
+      if url.Scheme != "" {
+         // We consider rootless paths per RFC 3986 as opaque.
+         url.Opaque = rest
+         return url, nil
+      }
+      // viaRequest = true 不能是 opaque 的形式
+      if viaRequest {
+         return nil, errors.New("invalid URI for request")
+      }
+   
+      // 格式不符合规范，报错
+      colon := strings.Index(rest, ":")
+      slash := strings.Index(rest, "/")
+      if colon >= 0 && (slash < 0 || colon < slash) {
+      // First path segment has colon. Not allowed in relative URL.
+         return nil, errors.New("first path segment in URL cannot contain colon")
+      }
+   }
+   // 协议不为空，并且以 // 开头，表示为 hierarchical 的形式
+   if (url.Scheme != "" || !viaRequest && !strings.HasPrefix(rest, "///")) && strings.HasPrefix(rest, "//") {
+      var authority string
+      // 分离出 authority 并解析 User 和 host
+      authority, rest = split(rest[2:], '/', false)
+      url.User, url.Host, err = parseAuthority(authority)
+      if err != nil {
+         return nil, err
+      }
+   }
+   // Set Path and, optionally, RawPath.
+   // RawPath is a hint of the encoding of Path. We don't want to set it if
+   // the default escaping of Path is equivalent, to help make sure that people
+   // don't rely on it in general.
+   if err := url.setPath(rest); err != nil {
+      return nil, err
+   }
+   return url, nil
+}
+````
 
 ---
 
 
-函数 `url.split(s string, sep byte, cutc bool)` 实现将 s 按照 sep 分割成两个字符串，cutc 用来判断是否保留sep
+函数 `url.split(s string, sep byte, cutc bool)` 实现将 s 按照 sep(首次出现) 分割成两个字符串，cutc 用来判断是否保留sep
 
-主要实现解析：
+````
+func split(s string, sep byte, cutc bool) (string, string) {
+   // 获取 sep 的索引位置
+   i := strings.IndexByte(s, sep)
+   if i < 0 {
+      return s, ""
+   }
+   // 判断是否保留 sep 返回
+   if cutc {
+      return s[:i], s[i+1:]
+   }
+   return s[:i], s[i:]
+}
 
-1. 使用 `strings.IndexByte()` 获取 sep 的索引位置
-2. 通过 cutc 判断是否保留 sep 返回
-
+````
 
 
 
