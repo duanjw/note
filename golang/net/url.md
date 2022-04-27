@@ -12,7 +12,7 @@ https://github.com/duanjw/note, hierarchical 可以是绝对的，也可以是�
 
 ---
 
-结构定义
+## 结构定义
 ````
 
 // URL 
@@ -31,15 +31,97 @@ type URL struct {
 
 // Values 用于操作 URL 中 query 部分
 type Values map[string][]string
+
+// Userinfo
+type Userinfo struct {
+    username    string
+    password    string
+    passwordSet bool
+}
+````
+
+---
+
+## 主要函数、方法签名
+
+这里把存在接收者的函数称为方法(*URL.EscapedPath())，把属于整个包的称为函数(url.Parse)。顺序按照导出函数，导出方法，其他函数。
+
+这里只涉及到一部分，一些操作 Values 和 Userinfo 的不在其中
+
+url包的函数：
+
+````
+// 解析 rawurl 返回一个 *URL
+url.Parse(rawurl string) (*URL, error)
+
+// 以 hierarchical 的形式解析 rawurl 返回一个 *URL
+url.ParseRequestURI(rawurl string) (*URL, error)
+
+// 解析 query 返回一个 Values
+url.ParseQuery(query string) (Values, error)
+
+// 以 path 的形式编码 s
+url.PathEscape(s string) string
+
+// 以 query 的形式编码 s
+url.QueryEscape(s string) string
+
+// 解析 RawQuery 返回一个 Values
+*URL.Query() Values
+
+
+````
+
+*URL 的方法
+
+````
+// 编码 path
+*URL.EscapedPath() string
+
+// 编码 Fragment
+*URL.EscapedFragment() string
+
+// 编码后输出完整的 url
+*URL.String() string
+
+// 编码后输出完整的 url 但是会隐藏密码
+*URL.Redacted()
+
+// 判断是否存在协议
+*URL.IsAbs() bool
+
+// 使用 ref 解析后的各个不为空的元素去替换 *URL，返回一个新的 *URL
+*URL.Parse(ref string) (*URL, error)
+
+// 与 *URL.Parse 相同，只是接收的是一个 *URL
+*URL.ResolveReference(ref *URL) *URL
+
+// 返回 path?query 或者 opaque?query 的形式
+*URL.RequestURI() string` 
+
+// 返回 hostname 
+*URL.Hostname() string
+
+// 返回端口
+*URL.Port() string
+
+// 已字节数组的形式输出url
+*URL.MarshalBinary() (text []byte, err error)
+
+// 解析字节数组，覆盖到 *URL
+*URL.UnmarshalBinary(text []byte) error
+
+````
+
+Values 的方法
+````
+// 编码Values后以字符串的形式返回 key1=val1&key2=val2
+Values.Encode() string
 ````
 
 ---
 
 ## 主要函数
-
-注意部分是未导出的函数，这里把导出函数排前面。
-
----
 
 函数 `url.Parse(rawurl string) (*URL, error)` 用于将原始 url 解析为 URL 结构
 
@@ -82,6 +164,43 @@ func ParseRequestURI(rawURL string) (*URL, error) {
       return url, nil
 }
 
+````
+
+---
+
+函数 `url.ParseQuery(query string) (Values, error)` 解析 query 返回 Values 结构体
+
+query 的键值对会被解码后存入 Values
+
+````
+
+func ParseQuery(query string) (Values, error) {
+   // 创建一个 Values 解析 query 并且返回 Values
+    m := make(Values)
+    err := parseQuery(m, query)
+    return m, err
+}
+````
+
+---
+
+函数 ` url.PathEscape(s string) string ` 用 patch 的方式编码 s
+
+````
+
+func PathEscape(s string) string {
+    return escape(s, encodePathSegment)
+}
+````
+
+---
+
+函数 ` url.QueryEscape(s string) string ` 用 query 的方式编码 s
+
+````
+func QueryEscape(s string) string {
+	return escape(s, encodeQueryComponent)
+}
 ````
 
 ---
@@ -213,58 +332,6 @@ func (u *URL) Redacted() string {
 
 ---
 
-函数 `url.ParseQuery(query string) string` 解析 query 返回 Values 结构体
-
-query 的键值对会被解码后存入 Values
-
-````
-
-func ParseQuery(query string) (Values, error) {
-   // 创建一个 Values 解析 query 并且返回 Values
-    m := make(Values)
-    err := parseQuery(m, query)
-    return m, err
-}
-````
-
----
-
-函数 `Values.Encode() string` 编码 Values 并以字符串的形式返回
-
-````
-func (v Values) Encode() string {
-	if v == nil {
-		return ""
-	}
-	var buf strings.Builder
-	// 创建一个 切片，存入 v 中的所有 key
-	keys := make([]string, 0, len(v))
-	for k := range v {
-		keys = append(keys, k)
-	}
-	// 排序,这里暂时不清楚为什么要排序
-	sort.Strings(keys)
-	for _, k := range keys {
-		vs := v[k]
-		// 编码 k
-		keyEscaped := QueryEscape(k)
-		for _, v := range vs {
-		    // 写入 & 作为分隔符，第一个不写
-			if buf.Len() > 0 {
-				buf.WriteByte('&')
-			}
-			// 写入 key=value
-			buf.WriteString(keyEscaped)
-			buf.WriteByte('=')
-			buf.WriteString(QueryEscape(v))
-		}
-	}
-	return buf.String()
-}
-````
-
----
-
 函数 `*URL.IsAbs() bool` 判断是 URL 否存在 Scheme
 
 ````
@@ -275,7 +342,7 @@ func (u *URL) IsAbs() bool {
 
 ---
 
-函数 `*URL.Parse() (*URL, error)` 接收一个字符串的 url 解析后将存在值的元素覆盖 u 中的值，返回一个新的 *URL
+函数 `*URL.Parse(ref string) (*URL, error)` 接收一个字符串的 url 解析后将存在值的元素覆盖 u 中的值，返回一个新的 *URL
 
 ````
 func (u *URL) Parse(ref string) (*URL, error) {
@@ -291,9 +358,9 @@ func (u *URL) Parse(ref string) (*URL, error) {
 
 ---
 
-函数 `*URL.ResolveReference() *URL` 接收一个 *URL 将存在值的元素覆盖 u 中的值，返回一个新的 *URL
+函数 `*URL.ResolveReference(ref *URL) *URL` 接收一个 *URL 将存在值的元素覆盖 u 中的值，返回一个新的 *URL
 
-该方法是 `*URL.Parse()` 的底层实现
+该方法是 `*URL.Parse(ref string)` 的底层实现
 
 ````
 func (u *URL) ResolveReference(ref *URL) *URL {
@@ -409,6 +476,42 @@ func (u *URL) UnmarshalBinary(text []byte) error {
 	return nil
 }
 
+````
+
+---
+
+函数 `Values.Encode() string` 编码 Values 并以字符串的形式返回
+
+````
+func (v Values) Encode() string {
+	if v == nil {
+		return ""
+	}
+	var buf strings.Builder
+	// 创建一个 切片，存入 v 中的所有 key
+	keys := make([]string, 0, len(v))
+	for k := range v {
+		keys = append(keys, k)
+	}
+	// 排序,这里暂时不清楚为什么要排序
+	sort.Strings(keys)
+	for _, k := range keys {
+		vs := v[k]
+		// 编码 k
+		keyEscaped := QueryEscape(k)
+		for _, v := range vs {
+		    // 写入 & 作为分隔符，第一个不写
+			if buf.Len() > 0 {
+				buf.WriteByte('&')
+			}
+			// 写入 key=value
+			buf.WriteString(keyEscaped)
+			buf.WriteByte('=')
+			buf.WriteString(QueryEscape(v))
+		}
+	}
+	return buf.String()
+}
 ````
 
 ---
